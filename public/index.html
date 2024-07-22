@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Messages Viewer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+
+        .message {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin: 10px 0;
+        }
+
+        .attachments img, .attachments video {
+            max-width: 200px;
+            height: auto;
+            margin: 5px;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 20px 0;
+        }
+
+        .pagination button,
+        .pagination input,
+        .pagination span {
+            margin: 0 5px;
+        }
+
+        .pagination input {
+            width: 50px;
+            text-align: center;
+        }
+
+        .filters {
+            display: flex;
+            justify-content: center;
+            margin: 20px 0;
+        }
+
+        .filters input,
+        .filters select,
+        .filters button {
+            padding: 10px;
+            margin: 0 5px;
+        }
+
+        .overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+        }
+
+        .overlay-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            max-width: 80%;
+            max-height: 80%;
+            overflow-y: auto;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Messages Viewer</h1>
+    <div class="filters">
+        <input type="text" id="searchContent" placeholder="Search content">
+        <select id="hasAttachments">
+            <option value="all">All</option>
+            <option value="with">With Attachments</option>
+            <option value="without">Without Attachments</option>
+        </select>
+        <input type="text" id="author" placeholder="Author">
+        <input type="text" id="channelId" placeholder="Channel ID">
+        <input type="text" id="guildId" placeholder="Server ID">
+        <button onclick="applyFilters()">Apply Filters</button>
+    </div>
+    <div id="messages"></div>
+    <div class="pagination">
+        <button id="prevPage" onclick="changePage(-1)">Previous</button>
+        <input type="number" id="pageInput" min="1" onchange="goToPage(this.value)">
+        <span>of</span>
+        <span id="totalPages">1</span>
+        <button id="nextPage" onclick="changePage(1)">Next</button>
+    </div>
+
+    <div id="overlay" class="overlay">
+        <div class="overlay-content">
+            <span class="close-btn" onclick="closeOverlay()">×</span>
+            <div id="overlayContent"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 1;
+        let totalPages = 1;
+        const limit = 10;
+
+        async function fetchMessages(page) {
+            const searchContent = encodeURIComponent(document.getElementById('searchContent').value);
+            const hasAttachments = document.getElementById('hasAttachments').value;
+            const author = encodeURIComponent(document.getElementById('author').value);
+            const channelId = encodeURIComponent(document.getElementById('channelId').value);
+            const guildId = encodeURIComponent(document.getElementById('guildId').value);
+
+            const response = await fetch(`/messages?page=${page}&limit=${limit}&content=${searchContent}&attachments=${hasAttachments}&author=${author}&channelId=${channelId}&guildId=${guildId}`);
+            const data = await response.json();
+
+            if (response.ok) {
+                const messagesContainer = document.getElementById('messages');
+                messagesContainer.innerHTML = '';
+
+                data.messages.forEach(message => {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message';
+
+                    const content = message.content || '<i>No content</i>';
+                    const author = message.author.username;
+                    const timestamp = new Date(message.timestamp).toLocaleString();
+
+                    messageDiv.innerHTML = `
+                        <p><strong>${author}</strong> <em>${timestamp}</em></p>
+                        <p>${content}</p>
+                        <button onclick="showMessageDetails(${JSON.stringify(message).replace(/"/g, '&quot;')})">View Details</button>
+                    `;
+
+                    const attachmentsDiv = document.createElement('div');
+                    attachmentsDiv.className = 'attachments';
+                    message.attachments.forEach(attachmentId => {
+                        fetch(`/attachments/${attachmentId}`)
+                            .then(response => response.json())
+                            .then(attachment => {
+                                if (attachment.contentType.startsWith('image/')) {
+                                    const img = document.createElement('img');
+                                    img.src = `/attachments/${attachmentId}/raw`;
+                                    attachmentsDiv.appendChild(img);
+                                } else if (attachment.contentType.startsWith('video/')) {
+                                    const video = document.createElement('video');
+                                    video.src = `/attachments/${attachmentId}/raw`;
+                                    video.controls = true;
+                                    attachmentsDiv.appendChild(video);
+                                } else {
+                                    const link = document.createElement('a');
+                                    link.href = `/attachments/${attachmentId}/raw`;
+                                    link.textContent = attachment.filename;
+                                    link.target = '_blank';
+                                    attachmentsDiv.appendChild(link);
+                                }
+                            })
+                            .catch(error => console.error('Error fetching attachment details:', error));
+                    });
+
+                    messageDiv.appendChild(attachmentsDiv);
+                    messagesContainer.appendChild(messageDiv);
+                });
+
+                currentPage = data.currentPage;
+                totalPages = data.totalPages;
+                updatePagination();
+            } else {
+                console.error('Failed to fetch messages:', data);
+                document.getElementById('messages').innerHTML = '<p>Failed to load messages. Please try again later.</p>';
+            }
+        }
+
+        function updatePagination() {
+            document.getElementById('prevPage').disabled = currentPage <= 1;
+            document.getElementById('nextPage').disabled = currentPage >= totalPages;
+            document.getElementById('pageInput').value = currentPage;
+            document.getElementById('pageInput').max = totalPages;
+            document.getElementById('totalPages').textContent = totalPages;
+        }
+
+        function changePage(delta) {
+            const newPage = currentPage + delta;
+            if (newPage >= 1 && newPage <= totalPages) {
+                fetchMessages(newPage);
+            }
+        }
+
+        function goToPage(page) {
+            page = parseInt(page);
+            if (page >= 1 && page <= totalPages) {
+                fetchMessages(page);
+            } else {
+                // Reset to current page if input is invalid
+                document.getElementById('pageInput').value = currentPage;
+            }
+        }
+
+        function applyFilters() {
+            fetchMessages(1);
+        }
+
+        function showMessageDetails(message) {
+            const overlayContent = document.getElementById('overlayContent');
+            overlayContent.innerHTML = `
+                <h2>Message Details</h2>
+                <p><strong>Author:</strong> ${message.author.username} (ID: ${message.author.id})</p>
+                <p><strong>Content:</strong> ${message.content || '<i>No content</i>'}</p>
+                <p><strong>Timestamp:</strong> ${new Date(message.timestamp).toLocaleString()}</p>
+                <p><strong>Channel ID:</strong> ${message.channel_id}</p>
+                <p><strong>Guild ID:</strong> ${message.guild_id}</p>
+                <p><strong>Message ID:</strong> ${message._id}</p>
+            `;
+
+            document.getElementById('overlay').style.display = 'block';
+        }
+
+        function closeOverlay() {
+            document.getElementById('overlay').style.display = 'none';
+        }
+
+        // Initial fetch
+        fetchMessages(currentPage);
+    </script>
+</body>
+
+</html>
